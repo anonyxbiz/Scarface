@@ -6,7 +6,7 @@ with open('requirements.txt') as f:
 
 setup(
     name="Scarface",
-    version="2.0.2",
+    version="2.0.3",
     description="Scarface - Asynchronous framework built on top of Quart to implement custom security, perfomance and efficiency in deploying python apps.",
     author="Anonyxbiz",
     author_email="biz@anonyxis.life",

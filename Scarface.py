@@ -1,43 +1,17 @@
-# Scarface/Scarface.py
-"""
-Scarface - Asynchronous framework built on top of Quart to implement custom security, perfomance and efficiency in deploying python apps.
-"""
 from quart import Quart, request, jsonify, send_file, make_response, Response
 from asyncio import run as asyncrun
-from secrets import token_urlsafe
-from ijson import items
-from json import dump
 from os.path import exists
-from os import mkdir
 from datetime import datetime as dt
 from cryptography.fernet import Fernet
-from os import environ
+from os import environ, mkdir
 from sys import exit
+from ijson import items
+from json import dump
 from hmac import new as new_hmac
 from hashlib import sha256
 from base64 import urlsafe_b64encode
 
 p = print
-
-class Safe:
-    def __init__(self) -> None:
-        self.safe_key = environ.get("safe_key", False)
-        if not self.safe_key:
-            exit("Safe key not found in the environment!")
-
-    async def tool(self, og: str, action: str):
-        try:
-            if action == "encrypt":
-                data = Fernet(self.safe_key.encode()).encrypt(og.encode("utf-8")).decode('utf-8')
-            elif action == "decrypt":
-                data = Fernet(self.safe_key.encode()).decrypt(og.encode("utf-8")).decode('utf-8')
-            
-            return data
-        except Exception as e:
-            p(e)
-            return False
-        
-safe = Safe()
 
 class Logging:
     def __init__(self) -> None:
@@ -46,21 +20,46 @@ class Logging:
         data = str(data)
         p(data)
         return data
-    
+
 logger = Logging()
 
-class User_db():
+class Safe:
+    def __init__(self) -> None:
+        self.safe_key = environ.get("safe_key", False)
+        if not self.safe_key:
+            exit("Safe key not found in the environment!")
+
+    async def tool(self, og):
+        try:
+            if isinstance(og, (list)):
+                data = Fernet(self.safe_key.encode()).encrypt(str(og[0]).encode("utf-8")).decode('utf-8')
+            elif isinstance(og, (tuple)):
+                data = Fernet(self.safe_key.encode()).decrypt(str(og[0]).encode("utf-8")).decode('utf-8')
+            else:
+                return None
+            return data
+        except Exception as e:
+            p(e)
+            return None
+        
+safe = Safe()
+
+class Database():
     def __init__(self, db_dir = "Database") -> None:
         self.safe_key = environ.get("safe_key", False)
         if not self.safe_key:
             exit("Safe key not found in the environment!")
         self.key = self.safe_key.encode()
-        self.users = f"{db_dir}/users"
+        self.db_items = f"{db_dir}/db_items"
         self.user_identifier = None
         self.do = None
         self.user_data = None
         self.og_user_identifier = None
         self.user_file_name = None
+        if not exists(db_dir):
+            mkdir(db_dir)
+        if not exists(self.db_items):
+            mkdir(self.db_items)
 
     async def hashing_tool(self, og: str):
         try:
@@ -76,7 +75,7 @@ class User_db():
             self.user_identifier = user_identifier
         self.user_identity = await self.hashing_tool(self.user_identifier)
         if self.user_identity:
-            user_file_name = f"{self.users}/{str(self.user_identity)}.json"
+            user_file_name = f"{self.db_items}/{str(self.user_identity)}.json"
         return user_file_name
 
     async def identities(self, user_file_name=None):
@@ -116,155 +115,117 @@ class User_db():
             else:
                 return (None, self.user_file_name)
 
-    async def user_management(self, user_identifier=None, do=None, data=None, user_file_name=None):
+    async def db_actions(self, user_identifier=None, do=None, data=None, user_file_name=None):
         if user_file_name:
             self.user_file_name = user_file_name
         self.og_user_identifier, self.user_identifier, self.do, self.user_data = user_identifier, str(user_identifier), do, data
 
         job = await self.identities()
         return job
-            
-user_db = User_db()
+   
+class Management:
+    def __init__(app) -> None:
+        app.db = Database(db_dir='db')
+        app.token_lifespan = 1200
+        app.maximum_sessions = 1
 
-class Protect:
-    def __init__(self, parent_instance, db_dir = "Database") -> None:
-        self.parent_instance = parent_instance
-        self.db_dir = db_dir
-        self.db = f"{db_dir}/db.json"
-        self.users = f"{db_dir}/users"
-        self.allowed_hosts = ["127.0.0.1:8001"]
-        self.max_seconds = 3600
-        self.static_dir = "static/"
-        self.protect_data = False
-
-    async def how_old_is_the(self, token):
-        data = []
-        rounds = 1
-        subject = token
-
-        while rounds <= 2:
-            hours, minutes, seconds = subject.split(":")
-            seconds = int(int(hours) * 60 + int(minutes)) * 60 + float(seconds)
-            data.append(seconds)
-            subject = str(dt.now().time())
-            rounds += 1
-
-        data = data[1] - data[0]
-        return (data, "Seconds")
-
-    async def is_the_token_expired(self, user):
-        return user
-        data = await self.how_old_is_the(user["token_gen_at"])
-        token_age = data[0]
-
-        if token_age > self.max_seconds:
-            return False
+    async def register(app, user_identifier, user_data = None):
+        token = await safe.tool([user_identifier])
+        safe_data = {
+            'user_identifier': user_identifier,
+            'user_data': None,
+            'sessions': [{
+                'auth_key': {
+                    'creation_time': await safe.tool([str(dt.now())]),
+                    'token': token
+                }
+            }]
+        }
+        if user_data:
+            safe_data['user_data'] = user_data
         else:
-            return token_age
+            del safe_data['user_data']
 
-    async def rate_limit(self):
-        try:
-            identities = await self.update_db('read', None, 'rate_limits.json')           
-            if identities != []:
-                for x, y in enumerate(identities):
-                    if self.parent_instance.ip == y["ip"]:
-                        data = await self.how_old_is_the(y["last_set"])
-
-                        token_age = data[0]
-                        if token_age <= 60:
-                            if y["hits"] >= 10:
-                                return False
-                            else:
-                                identities[x]["hits"] += 1
-                                identities[x]["total_hits"] += 1
-                        else:
-                            identities[x] = {"ip": self.parent_instance.ip, "total_hits": 1, "hits": 1, "last_set": str(dt.now().time()), "user_added_on": str(dt.now().time())}
-                            
-            else:
-                user = {"ip": self.parent_instance.ip, "total_hits": 1, "hits": 1, "last_set": str(dt.now().time()), "user_added_on": str(dt.now().time())}
-                identities.append(user)
-
-            await self.update_db('update', identities, 'rate_limits.json')
-            return True
-
-        except Exception as e:
-            p(e)
-            return False
-
-    async def jwt_token_gen(self, auth_key, index):
-        try:
-            jwt_token = await safe.tool(str(f"csrf_middleware>{str(auth_key)}|generated_at>{str(dt.now().time())}|identity_index>{str(index)}"), "encrypt")
-            return jwt_token
-        except Exception as e:
-            p(e)
-            return False
-
-    async def get_jwt_data(self, jwt_token):
-        try:
-            jwt_data = await safe.tool(jwt_token, "decrypt")
-            return jwt_data
-        except Exception as e:
-            p(e)
-            return False
-
-    async def session_manager(self, auth_key=None, do=None, jwt_token=None, index=None):
-        if do == "gen" and auth_key:
-            jwt_token = await self.jwt_token_gen(str(auth_key), str(index))
-            if jwt_token:
-                return jwt_token
-
-        elif do == "index" and jwt_token:
-            jwt_data = await self.get_jwt_data(jwt_token)
-            if not jwt_data:
-                return False
-            
-            try:
-                data = (jwt_data.split("|"))
-                identity_index = data[2].split(">")[1]
-                return identity_index
-            except:
-                return None
-
-    async def csrf_verification(self, data, headers):
-        self.indentity_data, self.identity_headers = data, headers
-
-        self.csrf_data = None
-        self.parent_instance.jwt_token = None
-        self.parent_instance.jwt_token = headers.get("x-jwt_token", False)
-
-        host_app = headers.get("Host", False)
-        if not host_app:
-            host_app = headers.get("authority", False)
-        if not host_app:
-            host_app = headers.get("Origin", False).replace("https://", "").replace("http://", "")
-
-        for domain in self.allowed_hosts:
-            if domain not in str(host_app):
-                return False, "Understandable but i'm not gonna work with that kind of request"
-
-        if not self.parent_instance.jwt_token:
-            self.parent_instance.jwt_token = data.get("jwt_token", False)
-
-        if not self.parent_instance.jwt_token:
-            self.parent_instance.jwt_token = None
-            return False, "jwt_token is missing on your request"
+        for item, value in safe_data.items():
+            if not isinstance(value, (list, dict, tuple)):
+                safe_data[item] = await safe.tool([value])
         
-        try:
-            user_data_file = await self.session_manager(None, "index", self.parent_instance.jwt_token)
-            if not user_data_file:
-                return False, "Invalid or expired jwt_token"
-            else:
-                user_data = await user_db.user_management(user_data_file, "get_user")
-                if not user_data:
-                    return False, "Invalid or expired jwt_token"
-                else:
-                    self.parent_instance.user_file_name = user_data_file
-                    self.csrf_data = self.parent_instance.jwt_token
-                    return True, self.csrf_data
+        create_user = await app.db.db_actions(user_identifier=user_identifier, do='create_user', data=safe_data)
+        if create_user[0]:
+            return (token, {
+                'detail': token
+            })
+        else:
+            return (None, {
+                'detail': 'Identity slready in our systems, please authenticate'
+            })
+
+    async def login(app, user_identifier):
+        user = await app.db.db_actions(user_identifier=user_identifier, do='get_user')
+        token = await safe.tool([user_identifier])
+
+        if user[0]:
+            for index, log in enumerate(user[1]['sessions']):
+                created_at = await safe.tool((log['auth_key']['creation_time'],))
                 
-        except Exception as e:
-            await logger.log_data(e)
-        return False, self.csrf_data
+                created_at_dt = dt.fromisoformat(created_at)
+                now = dt.now()
+                difference = (now - created_at_dt).total_seconds()
+                if difference > app.token_lifespan:
+                    del user[1]['sessions'][index]
+                                    
+            if len(user[1]['sessions']) >= app.maximum_sessions:
+                user[1]['sessions'] = []
+
+            auth_key = {
+                'auth_key': {
+                    'creation_time': await safe.tool([str(dt.now())]),
+                    'token': token
+                }
+            }
+
+            user[1]['sessions'].append(auth_key)
+            await app.db.db_actions(user_identifier, 'update_user', data=user[1])
+
+            return (token, {
+                'auth_key': token
+            })
+        
+        return (None, {
+            'detail': 'not found'
+        })
+
+    async def auth_session(app, auth_key):
+        token = await safe.tool((auth_key,))
+        if not token:
+            return (None, {'detail': 'Not found'})
+        
+        user = await app.db.db_actions(user_identifier=token, do='get_user')
+        if not user[0]:
+            return (None, {'detail': 'Not found'})
+
+        for index, log in enumerate(user[1]['sessions']):
+            if log['auth_key']['token'] == auth_key:
+                created_at = await safe.tool((log['auth_key']['creation_time'],))
+                
+                created_at_dt = dt.fromisoformat(created_at)
+                now = dt.now()
+                difference = (now - created_at_dt).total_seconds()
+                if difference > app.token_lifespan:
+                    del user[1]['sessions'][index]
+
+                    await app.db.db_actions(token, 'update_user', data=user[1])
+                    return (None, {
+                        'detail':'Invalid or expired auth_key'
+                    })
+                
+                return (f'Expires in {float(app.token_lifespan) - float(difference)} seconds!', user[1])
+
+        return (None, {
+            'detail': 'Invalid or expired auth_key'
+        })
+
+manage = Management()
 
 class Middleware:
     def __init__(self, app, comps) -> None:
@@ -276,28 +237,23 @@ class Middleware:
         self.jwt_token = None
         self.ip = None
         self.request_url = None
-        self.protect = Protect(self)
         self.user_file_name = None
         self.return_exception = None
+        self.allowed_hosts = ["127.0.0.1:8001"]
+        self.static_dir = "static/"
+        self.protect_data = False
 
     async def endpoint_validation(self):
         try:
             if not self.csrf_middleware:
                 self.return_exception = jsonify({'error': "csrf_middleware is missing from your request."}), 406
             else:
-                user_file_name = await self.protect.get_jwt_data(self.csrf_middleware)
-                if user_file_name:
-                    try:
-                        self.user_file_name = str(user_file_name).split('csrf_middleware>')[1].split("|")[0]
-                        get_user = await user_db.user_management(user_file_name=self.user_file_name, do="get_user")
-                        if get_user[0]:
-                            pass
-                        else:
-                            self.return_exception = jsonify({'error': "We did not find an identity connected to this csrf_middleware"}), 403
-                    except:
-                        self.return_exception = jsonify({'error': "Unable to validate your csrf_middleware, please try again later"}), 409
+                auth = await manage.auth_session(self.csrf_middleware)
+                if not auth[0]:
+                    self.return_exception = jsonify({'error': auth[1]}), 403
+                    return False
                 else:
-                    self.return_exception = jsonify({'error': "Invalid or expired csrf_middleware"}), 406
+                    pass
         except Exception as e:
             await logger.log_data(e)
             self.return_exception = jsonify({'error': "Something went wrong"}), 403
@@ -311,6 +267,20 @@ class Middleware:
 
         self.request_url = str(request.url)
         await logger.log_data(f"Processing request from {self.ip}:>> {self.req_type}@ {self.request_url}")
+
+        host_app = request.headers.get("Host", None)
+        if not host_app:
+            host_app = request.headers.get("authority", None)
+        if not host_app:
+            host_app = request.headers.get("Origin", None).replace("https://", "").replace("http://", "")
+
+        self.firewall = 'blocked'
+        for domain in self.allowed_hosts:
+            if str(domain) in str(host_app):
+                self.firewall = 'allowed'
+
+        if self.firewall == 'blocked':
+            return jsonify({'error': "Understandable but i'm not gonna work with that kind of request"}), 406
 
         for x in self.protected_routes:
             if x in self.request_url:
@@ -338,19 +308,8 @@ class Middleware:
             if not self.headers or not self.data:
                 return jsonify({'error': "Some required data is missing from your request."}), 406
 
-            # Get the variable containing the identity verification middleware globally used as `csrf_middleware`
-            if self.headers.get("x-csrf_middleware", None):
-                self.csrf_middleware = self.headers["x-csrf_middleware"]
-            elif self.data.get("csrf_middleware", None):
-                self.csrf_middleware = self.data["csrf_middleware"]
-            elif self.headers.get("x-api_key", None):
-                self.csrf_middleware = self.headers['x-api_key']
-            elif self.data.get("api_key", None):
-                self.csrf_middleware = self.data["api_key"]
-            elif self.headers.get("x-authorization", None):
-                self.csrf_middleware = self.headers['x-authorization']
-            elif self.data.get("authorization", None):
-                self.csrf_middleware = self.data["authorization"]
+            # Getthe  variable containing the identity verification middleware globally used as `csrf_middleware`
+            self.csrf_middleware =  request.cookies.get('auth_key')
 
             await self.endpoint_validation()
             if self.return_exception is not None:
@@ -434,13 +393,26 @@ elements = Elements(setup)
 class Frontend:
     def __init__(self, elements):
         self.app = elements.app
-        self.comps = elements.comps
         self.elements = elements
         self.secure_identity_items = [True, False][1]
 
+    async def create_session_data(self, headers):
+        try:
+            session_data = {"headers": {}}
+
+            for x in headers:
+                x_data = await safe.tool([str(x[1])])     
+                session_data["headers"].update({str(x[0]): x_data})
+
+            return session_data
+        except Exception as e:
+            await logger.log_data(e)
+            self.return_exception = jsonify({'error': "Something went wrong"}), 500
+            return False
+
     async def serve_static(self, path):
         try:
-            return await send_file(self.elements.middleware.protect.static_dir + path)
+            return await send_file(self.elements.middleware.static_dir + path)
         except PermissionError as e:
             p(f"Permission error: {e}")
             data = "Ohh no, you're onto something!"
@@ -452,78 +424,8 @@ class Frontend:
 
         return jsonify({'error': data}), 404
 
-    async def secure_data(self, secure_state, identity_data, secure_dict=None):
-        new_identity_data = {}
-
-        if not secure_dict:
-            for key, value in identity_data.items():
-                if isinstance(value, (str)):
-                    encrypted_value = await safe.tool(value, secure_state)
-                    new_identity_data[key] = encrypted_value
-                else:
-                    new_identity_data[key] = value
-            identity_data = new_identity_data
-        else:
-            for key, value in identity_data[secure_dict].items():
-                if isinstance(value, (str)):
-                    encrypted_value = await safe.tool(value, secure_state)
-                    new_identity_data[key] = encrypted_value
-                else:
-                    new_identity_data[key] = value
-            identity_data[secure_dict] = new_identity_data
-        return identity_data
-
-    async def gen_token(self, user_data=None):
-        try:
-            ip = str(request.headers.get("X-Forwarded-For", "127.0.0.1"))
-            if ip != "127.0.0.1":
-                identifyer = ip
-            else:
-                identifyer = str(request.headers.get("User-Agent", "User-Agent"))
-                
-            identity_data = {"ip": ip, "token_gen_at": str(dt.now().time())}
-
-            try:
-                if self.secure_identity_items:
-                    identity_data = await self.secure_data('encrypt', identity_data)
-
-                create_user = await user_db.user_management(identifyer, "create_user", identity_data)
-                if create_user[0] is not None:
-                    return create_user[1]
-                else:
-                    get_user = await user_db.user_management(identifyer, "get_user")
-                    self.session = {"session_time": str(dt.now().time()), "session_ip": ip, "activity": f"Visited {self.path}"}
-
-                    if get_user[0]:
-                        if self.secure_identity_items:
-                            identity_data = await self.secure_data('decrypt', get_user[1])
-                        else:
-                            identity_data = get_user[1]
-                        
-                        if identity_data:
-                            if self.secure_identity_items:
-                                self.session = await self.secure_data('encrypt', self.session)
-                            
-                            if not identity_data.get("identity_sessions", False):
-                                identity_data.update({"identity_sessions": [self.session]})
-                            else:
-                                identity_data["identity_sessions"].append(self.session)
-
-                        if self.secure_identity_items:
-                            identity_data = await self.secure_data('encrypt', identity_data)
-                        await user_db.user_management(ip, "update_user", identity_data)
-
-                    return create_user[1]
-
-            except Exception as e:
-                await logger.log_data(e)
-                return jsonify({'error': "Something went wrong"}), 500
-
-        except Exception as e:
-            p(e)
-            return False
-
     async def serve_pages(self, path="page/404"):
+        session_data = await self.create_session_data(request.headers)
         path = str(path)
         self.path = path
         
@@ -532,7 +434,7 @@ class Frontend:
         path = path.split("page/")[1]
 
         while True:
-            page_file = f'{self.elements.middleware.protect.static_dir}page/{path}.html'
+            page_file = f'{self.elements.middleware.static_dir}page/{path}.html'
             if not exists(page_file):
                 path = "404"
             else:
@@ -542,10 +444,22 @@ class Frontend:
             with open(page_file, 'r') as file:
                 html_content = file.read()
             try:
-                token = await self.gen_token()
-                csrf_middleware = await self.elements.middleware.protect.session_manager(token, "gen")
-                html_content = html_content.replace('{{csrf_middleware}}', csrf_middleware)
+                ip = str(request.headers.get("X-Forwarded-For", None))
+                if ip != "127.0.0.1":
+                    identifyer = ip
+                else:
+                    identifyer = str(request.headers.get("User-Agent", "User-Agent"))
 
+                create_user = await manage.register(identifyer, session_data)
+                if create_user[0]:
+                    html_content = html_content.replace('{auth_key}', create_user[0])
+                else:
+                    token = await manage.login(identifyer)
+                    if token[0]:
+                        html_content = html_content.replace('{auth_key}', token[0])
+                    else:
+                        return jsonify(token[1]), 403
+                    
             except Exception as e:
                 await logger.log_data(e)
                 return jsonify({'error': "Something went wrong"}), 500
@@ -562,11 +476,6 @@ class Frontend:
         self.app.add_url_rule('/<path:path>', 'serve_pages', self.serve_pages)
 
 frontend = Frontend(elements)
-
-if not exists(elements.middleware.protect.db_dir):
-    mkdir(elements.middleware.protect.db_dir)
-if not exists(elements.middleware.protect.users):
-    mkdir(elements.middleware.protect.users)
 
 if __name__ == '__main__':
     pass
