@@ -10,7 +10,7 @@ setup(
     description="Scarface - Asynchronous framework built on top of Quart to implement custom security, perfomance and efficiency in deploying python apps.",
     author="Anonyxbiz",
     author_email="biz@anonyxis.life",
-    url="https://github.com/anonyxbiz/wazing_net",
+    url="https://github.com/anonyxbiz/scarface",
     packages=find_packages(),
     include_package_data=True,
     install_requires=requirements,
