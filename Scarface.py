@@ -1,4 +1,4 @@
-from quart import Quart, request, jsonify, send_file, make_response, Response
+from quart import Quart, request, jsonify, send_file, make_response, Response, redirect
 from asyncio import run as asyncrun
 from os.path import exists
 from datetime import datetime as dt
@@ -202,7 +202,7 @@ class Management:
         
         user = await app.db.db_actions(user_identifier=token, do='get_user')
         if not user[0]:
-            return (None, {'detail': 'Not found'})
+            return (None, {'detail': 'Invalid or expired auth key'})
 
         for index, log in enumerate(user[1]['sessions']):
             if log['auth_key']['token'] == auth_key:
@@ -287,7 +287,7 @@ class Middleware:
                 self.take_it_easy = False
                 break
 
-        if self.req_type not in self.allowed_methods:
+        if self.req_type not in self.allowed_methods.split(', '):
             return jsonify({'error': "We understand what you're asking for, but we currently do not support this method"}), 407
 
         if not self.take_it_easy:
@@ -305,11 +305,10 @@ class Middleware:
                 return jsonify({'error': "Unexpected server error"}), 500
 
             self.headers, self.data = headers, data
-            if not self.headers or not self.data:
-                return jsonify({'error': "Some required data is missing from your request."}), 406
 
-            # Getthe  variable containing the identity verification middleware globally used as `csrf_middleware`
-            self.csrf_middleware =  request.cookies.get('auth_key')
+            self.csrf_middleware =  request.cookies.get('auth_key', None)
+            if not self.csrf_middleware:
+                return jsonify({'error': "Authentication required!"}), 409
 
             await self.endpoint_validation()
             if self.return_exception is not None:
