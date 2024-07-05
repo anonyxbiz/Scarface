@@ -1,4 +1,5 @@
-from quart import Quart, request, jsonify, send_file, make_response, Response, redirect
+import quart as scar
+Quart, request, jsonify, send_file, make_response, Response, redirect = scar.Quart, scar.request, scar.jsonify, scar.send_file, scar.make_response, scar.Response, scar.redirect
 from asyncio import run as asyncrun
 from os.path import exists
 from datetime import datetime as dt
@@ -126,8 +127,8 @@ class Database():
 class Management:
     def __init__(app) -> None:
         app.db = Database(db_dir='db')
-        app.token_lifespan = 1200
-        app.maximum_sessions = 1
+        app.token_lifespan = 1200 # 20 minutes
+        app.maximum_sessions = 10
 
     async def register(app, user_identifier, user_data = None):
         token = await safe.tool([user_identifier])
@@ -153,11 +154,13 @@ class Management:
         create_user = await app.db.db_actions(user_identifier=user_identifier, do='create_user', data=safe_data)
         if create_user[0]:
             return (token, {
-                'detail': token
+                'detail': {
+                    'auth_key': token
+                }
             })
         else:
             return (None, {
-                'detail': 'Identity slready in our systems, please authenticate'
+                'detail': 'Identity already in our systems, please authenticate'
             })
 
     async def login(app, user_identifier):
@@ -188,9 +191,11 @@ class Management:
             await app.db.db_actions(user_identifier, 'update_user', data=user[1])
 
             return (token, {
-                'auth_key': token
+                'detail': {
+                    'auth_key': token
+                }
             })
-        
+
         return (None, {
             'detail': 'not found'
         })
@@ -198,7 +203,9 @@ class Management:
     async def auth_session(app, auth_key):
         token = await safe.tool((auth_key,))
         if not token:
-            return (None, {'detail': 'Not found'})
+            return (None, {
+                'detail': 'Invalid or expired auth_key'
+            })
         
         user = await app.db.db_actions(user_identifier=token, do='get_user')
         if not user[0]:
@@ -218,7 +225,7 @@ class Management:
                     return (None, {
                         'detail':'Invalid or expired auth_key'
                     })
-                
+
                 return (f'Expires in {float(app.token_lifespan) - float(difference)} seconds!', user[1])
 
         return (None, {
@@ -245,10 +252,10 @@ class Middleware:
 
     async def endpoint_validation(self):
         try:
-            if not self.csrf_middleware:
+            if not self.auth_key:
                 self.return_exception = jsonify({'error': "csrf_middleware is missing from your request."}), 406
             else:
-                auth = await manage.auth_session(self.csrf_middleware)
+                auth = await manage.auth_session(self.auth_key)
                 if not auth[0]:
                     self.return_exception = jsonify({'error': auth[1]}), 403
                     return False
@@ -259,7 +266,7 @@ class Middleware:
             self.return_exception = jsonify({'error': "Something went wrong"}), 403
         
     async def before_request(self):
-        self.csrf_middleware, self.ip, self.user_file_name, self.return_exception, self.req_type, self.take_it_easy = None, None, None, None, request.method, True
+        self.auth_key, self.ip, self.user_file_name, self.return_exception, self.req_type, self.take_it_easy = None, None, None, None, request.method, True
 
         self.ip = request.headers.get("X-Forwarded-For", None)
         if not self.ip:
@@ -276,7 +283,7 @@ class Middleware:
 
         self.firewall = 'blocked'
         for domain in self.allowed_hosts:
-            if str(domain) in str(host_app):
+            if str(host_app).endswith(str(domain)):
                 self.firewall = 'allowed'
 
         if self.firewall == 'blocked':
@@ -304,10 +311,13 @@ class Middleware:
             else:
                 return jsonify({'error': "Unexpected server error"}), 500
 
-            self.headers, self.data = headers, data
+            self.auth_key =  request.cookies.get('auth_key', None)
+            if not self.auth_key:
+                self.auth_key =  headers.get('X-auth_key', None)
+            if not self.auth_key:
+                self.auth_key =  data.get('auth_key', None)
 
-            self.csrf_middleware =  request.cookies.get('auth_key', None)
-            if not self.csrf_middleware:
+            if not self.auth_key:
                 return jsonify({'error': "Authentication required!"}), 409
 
             await self.endpoint_validation()
@@ -440,29 +450,28 @@ class Frontend:
                 break
 
         try:
-            with open(page_file, 'r') as file:
+            with open(page_file, 'r', encoding='utf-8') as file:
                 html_content = file.read()
-            try:
+            
+            if '<!--auth_key-->' in html_content:
+                html_content = html_content.replace('<!--auth_key-->', '')
+
                 ip = str(request.headers.get("X-Forwarded-For", None))
-                if ip != "127.0.0.1":
+                if not ip in ["127.0.0.1", "None"]:
                     identifyer = ip
                 else:
                     identifyer = str(request.headers.get("User-Agent", "User-Agent"))
 
                 create_user = await manage.register(identifyer, session_data)
                 if create_user[0]:
-                    html_content = html_content.replace('{auth_key}', create_user[0])
+                    html_content = html_content.replace('<!--app_reg-->', f'<script>document.cookie = "auth_key={create_user[0]}; expires=Thu, 01 Jan 00:00:00 UTC; path=/";</script>')
                 else:
                     token = await manage.login(identifyer)
                     if token[0]:
-                        html_content = html_content.replace('{auth_key}', token[0])
+                        html_content = html_content.replace('<!--app_reg-->', f'<script>document.cookie = "auth_key={create_user[0]}; expires=Thu, 01 Jan 00:00:00 UTC; path=/";</script>')
                     else:
                         return jsonify(token[1]), 403
-                    
-            except Exception as e:
-                await logger.log_data(e)
-                return jsonify({'error': "Something went wrong"}), 500
-            
+                
         except Exception as e:
             await logger.log_data(e)
             return jsonify({'error': "Something went wrong"}), 500
